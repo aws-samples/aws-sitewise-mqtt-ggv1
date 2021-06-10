@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/mqtt-client-test" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/mqtt-sitewise-connector-lambda" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/sitewise-assets-creation" vcs="Git" />
+  </component>
+</project>

@@ -1,0 +1,3 @@
+AWSIoTPythonSDK
+boto3
+schedule
