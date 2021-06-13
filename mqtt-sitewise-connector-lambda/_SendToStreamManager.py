@@ -30,10 +30,10 @@ else:
     logger.error("Config file: {} does not exists, please check if the file exists or not.".format(file))
     exit(1)
 
-stream_name = config.get('mqtt-settings', 'stream-name')
+#stream_name = config.get('mqtt-settings', 'stream-name')
 #stream_name = "SiteWise_Stream"
 
-def init_gg_stream_manager():
+def init_gg_stream_manager(stream_name):
     logger.info("Initializing Stream manager.")
     site_wise_stream_client = StreamManagerClient()
     try:
@@ -63,7 +63,7 @@ def init_gg_stream_manager():
         logger.error("Exception occurred while listing the existing stream: %s", traceback.format_exc())
     return site_wise_stream_client
 
-def append_to_gg_stream_manager(stream_client, payload):
+def append_to_gg_stream_manager(stream_client, stream_name, payload):
     logger.info("In append_to_gg_stream_manager {}".format(payload))
     try:
         stream_client.append_message(stream_name, payload)

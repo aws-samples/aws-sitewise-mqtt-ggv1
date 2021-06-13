@@ -29,7 +29,6 @@ group_root_ca_file = config.get('mqtt-settings', 'group_root_ca_file')
 certificate_file = config.get('mqtt-settings', 'certificate_file')
 privatekey_file = config.get('mqtt-settings', 'privatekey_file')
 clientId = config.get('mqtt-settings', 'clientId')
-thingName = config.get('mqtt-settings', 'thingName')
 topic = config.get('mqtt-settings', 'topic')
 
 myAWSIoTMQTTClient = AWSIoTMQTTClient(clientId)
