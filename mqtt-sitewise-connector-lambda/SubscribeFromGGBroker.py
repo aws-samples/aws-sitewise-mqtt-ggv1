@@ -20,8 +20,10 @@ logger = logging.getLogger('dev')
 tags_dict = {}
 q = queue.Queue()
 region = os.environ.get('AWS_REGION')
-wait_time = os.environ.get('wait_time')
-stream_name = os.environ.get('stream_name')
+
+### Not using the lambda environment variables.
+#wait_time = os.environ.get('wait_time')
+#stream_name = os.environ.get('stream_name')
 
 file = pathlib.Path('conf/mqtt-connector.cfg')
 
@@ -33,11 +35,14 @@ else:
     logger.error("Config file: {} does not exists, please check if the file exists or not.".format(file))
     exit(1)
 
+wait_time = config.getint('mqtt-settings', 'wait_time')
+stream_name = config.get('mqtt-settings', 'stream_name')
+
 try:
-    logger.info("Initiating Stream manager client.")
+    logger.info("Initiating Stream manager client with stream name : {}.".format(stream_name))
     sitewise_stream_client = init_gg_stream_manager(stream_name)
     logger.info("Completed stream manager initiation")
-except:
+except (ValueError, Exception):
     logger.error("Exception occurred while creating the sitewise stream client : %s", traceback.format_exc())
 
 def send_to_stream_manager():
@@ -49,7 +54,7 @@ def send_to_stream_manager():
         logger.info("Payload that is going to stream manager is: {}".format(payload_to_streammanager))
         try:
             append_to_gg_stream_manager(sitewise_stream_client, stream_name, json.dumps(payload_to_streammanager).encode())
-        except:
+        except (ValueError, Exception):
             logger.error("Exception occurred while appending the message to stream manager: %s", traceback.format_exc())
         logger.debug("Payload sent to stream manager successfully.")
         try:
@@ -71,7 +76,7 @@ def process_queue_and_send_to_stream_manager():
         logger.info("Total processed messages were : {}".format(count))
         if count > 0:
             send_to_stream_manager()
-        wait_time = config.getint('mqtt-settings', 'wait_time')
+        #wait_time = config.getint('mqtt-settings', 'wait_time')
         logger.info("Pausing for {} seconds to collect new messages.".format(str(wait_time)))
         time.sleep(wait_time)
         logger.info("Pause completed. Going to next iteration.")
@@ -100,5 +105,5 @@ def lambda_handler(event, context):
         logger.debug("Message sent to queue - put completed. - Queue size is {}".format(q.qsize()))
     except Exception as e:
         logger.error(e, exc_info=True)
-    except:
+    except (ValueError, Exception):
         logger.error("uncaught exception: %s", traceback.format_exc())

@@ -51,17 +51,17 @@ class TestDataGenerator(object):
         #print("tag is ::: {}".format(equipment_tag_alias))
         messages = []
         measurements = {
-                            'name': equipment_tag_alias,
-                            'value': measurement_value,
-                            'timestamp': recorded_time,
-                            'quality': quality_value
-                       }
+            'name': equipment_tag_alias,
+            'value': measurement_value,
+            'timestamp': recorded_time,
+            'quality': quality_value
+        }
         messages.append(measurements)
 
         payload = {
-                         'alias': equipment_tag_alias,
-                         'messages': messages
-                  }
+            'alias': equipment_tag_alias,
+            'messages': messages
+        }
         logger.debug("Json payload message is :: {}".format(json.dumps(payload)))
         return json.dumps(payload)
 
@@ -69,7 +69,7 @@ class TestDataGenerator(object):
     def wrapper_data_generator(sleep_interval):
         global config
         for k in range(5000):
-        #for k in range(50):
+            #for k in range(50):
             power = rand.randint(17, 27)
             temperature = rand.randint(20, 25)
             rpm = rand.randint(90, 130)
@@ -117,8 +117,7 @@ class TestDataGenerator(object):
             k += 1
 
 if __name__ == '__main__':
-    for i in range(4):
-    #for i in range(2):
+    #for i in range(4):
+    for i in range(2):
         t = threading.Thread(target=TestDataGenerator.wrapper_data_generator, args=(1,))
         t.start()
-

@@ -11,6 +11,8 @@ _setEnv()
   ZIP_FILE_NAME="mqtt-sitewise-connector-lambda.zip"
   FUNCTION_NAME="mqtt-ggv1-lambda-to-sitewise-edge"
   LAMBDA_ROLE_NAME="sitewise-mqtt-lambda-exe-role"
+  SW_ROLE_POLICY="gg-group-role-to-sw-policy"
+  SW_ROLE_NAME="gg-group-role-to-sw-role"
   WAIT_TIME=20
   STREAM_NAME="SiteWise_Stream"
   LAMBDA_TIMEOUT=300
@@ -44,6 +46,42 @@ _check_if_zip_exists() {
 
 _bundle_the_code() {
   zip -r ${ZIP_FILE_NAME} conf _SendToStreamManager.py SubscribeFromGGBroker.py
+}
+
+_create_iam_role_to_allow_gateway_to_access_sitewise() {
+  # https://docs.aws.amazon.com/iot-sitewise/latest/userguide/configure-gateway.html
+
+  GET_SITWISE_ROLE=`aws iam get-role --role-name ${SW_ROLE_NAME} --profile ${AWS_CLI_PROFILE}`
+  if [ $? -eq 0 ]; then
+    echo "GET_SITWISE_ROLE is : ${GET_SITWISE_ROLE}"
+    SW_ROLE_SUCCESS_ROLE_ARN=`echo ${GET_SITWISE_ROLE} | jq -r '.Role | .Arn'`
+    echo "GET_SITWISE_ROLE - SW_ROLE_SUCCESS_ROLE_ARN is : ${SW_ROLE_SUCCESS_ROLE_ARN}"
+  else
+    SW_ROLE_SUCCESS=`aws iam create-role --role-name ${SW_ROLE_NAME} \
+      --profile ${AWS_CLI_PROFILE} \
+      --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{ "Effect": "Allow", "Principal": {"Service": "greengrass.amazonaws.com"}, "Action": "sts:AssumeRole"}]}'`
+    SW_ROLE_SUCCESS_ROLE_ARN=`echo ${SW_ROLE_SUCCESS} | jq -r '.Role | .Arn'`
+    echo "SW_ROLE_SUCCESS_ROLE_ARN is : ${SW_ROLE_SUCCESS_ROLE_ARN}"
+  fi
+  IAM_SW_POLICY_ARN="arn:aws:iam::${AWS_ACCOUNT_NUMBER}:policy/${SW_ROLE_POLICY}"
+  AW_IAM_GET_SW_POLICY=`aws iam get-policy --profile ${AWS_CLI_PROFILE} --policy-arn ${IAM_SW_POLICY_ARN}`
+  if [ $? -eq 0 ]; then
+    echo "IAM_SW_POLICY_ARN is : ${IAM_SW_POLICY_ARN}"
+    ATTACH_POLICY_TO_ROLE=`aws iam attach-role-policy --profile ${AWS_CLI_PROFILE} --role-name ${SW_ROLE_NAME} --policy-arn ${IAM_SW_POLICY_ARN}`
+  else
+    SW_IAM_POLICY=`aws iam create-policy --profile ${AWS_CLI_PROFILE} \
+      --policy-name ${SW_ROLE_POLICY} \
+      --policy-document '{"Version": "2012-10-17","Statement": [{"Sid": "vs0", "Effect": "Allow","Action": "iotsitewise:*","Resource": "*"},{"Sid": "vs1", "Effect": "Allow","Action": "ecr:*","Resource": "*"}]}'`
+    SW_IAM_POLICY_ARN=`echo ${SW_IAM_POLICY} | jq -r '.Policy | .Arn'`
+    echo "SW_IAM_POLICY_ARN is : ${SW_IAM_POLICY_ARN}"
+    ATTACH_POLICY_TO_ROLE=`aws iam attach-role-policy --profile ${AWS_CLI_PROFILE} --role-name ${SW_ROLE_NAME} --policy-arn ${SW_IAM_POLICY_ARN}`
+  fi
+}
+
+_associate_a_role_to_gg_group() {
+  GGC_GROUP_ID=`aws greengrass list-groups --profile ${AWS_CLI_PROFILE} | jq -c '.Groups[] | select( .Name == "'"$GGC_GROUP_NAME"'" )' | jq -r .Id`
+  echo "GGC_GROUP_ID IS - ${GGC_GROUP_ID}"
+  ASSOCIATE_A_ROLE_TO_GROUP=`aws greengrass associate-role-to-group --profile ${AWS_CLI_PROFILE} --group-id ${GGC_GROUP_ID} --role-arn ${SW_ROLE_SUCCESS_ROLE_ARN}`
 }
 
 _create_iam_role_and_lambda_function() {
@@ -110,7 +148,7 @@ _check_if_lambda_exists_and_create() {
 }
 
 _get_aws_account_number() {
-  IDENTITY=`aws sts get-caller-identity`
+  IDENTITY=`aws --profile ${AWS_CLI_PROFILE} sts get-caller-identity`
   echo ${IDENTITY}
   AWS_ACCOUNT_NUMBER=`echo ${IDENTITY} | jq -r '.Account'`
   echo "AWS_ACCOUNT_NUMBER is : ${AWS_ACCOUNT_NUMBER}"
@@ -125,7 +163,18 @@ _get_lambda_function_arn() {
 _create_a_lambda_function_definition() {
   res=`aws greengrass create-function-definition --profile ${AWS_CLI_PROFILE} \
     --name "gg-${FUNCTION_NAME}" \
-    --initial-version '{"Functions": [{"Id": "'"${FUNCTION_NAME}-vers-id"'", "FunctionArn": "'"${ALIAS_ARN}"'", "FunctionConfiguration": {"Executable": "'"${LAMBDA_HANDLER}"'", "Pinned": true, "Timeout": 5,"Environment": {"Execution": {"IsolationMode": "NoContainer"}}}}]}'`
+    --initial-version '{"Functions": [
+                                      {"Id": "'"${FUNCTION_NAME}-vers-id"'", "FunctionArn": "'"${ALIAS_ARN}"'", \
+                                      "FunctionConfiguration": \
+                                        { \
+                                          "Executable": "'"${LAMBDA_HANDLER}"'", "Pinned": true, "Timeout": 840,"Environment": {"Execution": {"IsolationMode": "NoContainer"}}} \
+                                        }, \
+                                      {"Id": "GGV1StreamManager", "FunctionArn": "arn:aws:lambda:::function:GGStreamManager:1", \
+                                      "FunctionConfiguration": \
+                                        { \
+                                          "Pinned": true, "MemorySize":  4194304, "Timeout": 840} \
+                                        } \
+                                     ]}'`
   #echo $res
   LAMBDA_FUNCTION_LATEST_VERSION_ARN=`echo $res | jq -r '.LatestVersionArn'`
   LAMBDA_FUNCTION_ID=`echo $res | jq -r '.Id'`
@@ -172,7 +221,7 @@ _create_device_definition() {
   res_dev_def=`aws greengrass list-device-definitions --profile ${AWS_CLI_PROFILE} | jq -r '.Definitions[] | select(.Name == "'"${SOURCE_PUBLISHER_THING_NAME}-Device"'").Name'`
   if [ ${res_dev_def} == "${SOURCE_PUBLISHER_THING_NAME}-Device" ]; then
     echo "Device definition already exists - Not recreating it and getting the latest version arn."
-    DEVICE_LATEST_VERSION_ARN=`aws greengrass list-device-definitions --profile skkodali1 | jq -r '.Definitions[] | select(.Name == "'"Sitewise_MQTT_Publisher-Device"'").LatestVersionArn'`
+    DEVICE_LATEST_VERSION_ARN=`aws greengrass list-device-definitions --profile ${AWS_CLI_PROFILE} | jq -r '.Definitions[] | select(.Name == "'"Sitewise_MQTT_Publisher-Device"'").LatestVersionArn'`
     echo "DEVICE_LATEST_VERSION_ARN is - ${DEVICE_LATEST_VERSION_ARN}"
   else
     DEVICE_DEFINITION=`aws greengrass create-device-definition --name "${SOURCE_PUBLISHER_THING_NAME}-Device" --profile ${AWS_CLI_PROFILE} \
@@ -183,9 +232,24 @@ _create_device_definition() {
   fi
 }
 
+_create_sitewise_connector_definition() {
+  res_sw_conn_def=`aws greengrass list-connector-definitions --profile ${AWS_CLI_PROFILE} | jq -r '.Definitions[] | select(.Name == "MQTT-Sitewise-Connector").Name'`
+  if [ ${res_sw_conn_def} == "MQTT-Sitewise-Connector" ]; then
+    echo "Sitewise connector definition already exists - Not recreating it and getting the latest version arn."
+    SW_CONNECTOR_LATEST_VERSION_ARN=`aws greengrass list-connector-definitions --profile ${AWS_CLI_PROFILE} | jq -r '.Definitions[] | select(.Name == "'"MQTT-Sitewise-Connector"'").LatestVersionArn'`
+    echo "SW_CONNECTOR_LATEST_VERSION_ARN is - ${SW_CONNECTOR_LATEST_VERSION_ARN}"
+  else
+    SITEWISE_CONNECTOR_DEF=`aws greengrass create-connector-definition --name MQTT-Sitewise-Connector --profile ${AWS_CLI_PROFILE} \
+                            --initial-version '{"Connectors": [{"Id": "MyIoTSiteWiseConnector","ConnectorArn": "arn:aws:greengrass:'${AWS_REGION}'::/connectors/IoTSiteWise/versions/11"}]}'`
+    echo ${SITEWISE_CONNECTOR_DEF}
+    SW_CONNECTOR_LATEST_VERSION_ARN=`echo ${SITEWISE_CONNECTOR_DEF} | jq -r '.LatestVersionArn'`
+    echo "SW_CONNECTOR_LATEST_VERSION_ARN is - ${SW_CONNECTOR_LATEST_VERSION_ARN}"
+  fi
+}
+
 _create_subscription_definition_and_version() {
   sub_res=`aws greengrass create-subscription-definition --profile ${AWS_CLI_PROFILE} \
-    --initial-version '{"Subscriptions": [{"Id": "'"${FUNCTION_NAME}-subscription-id"'", "Source": "'"${SOURCE_PUBLISHER_DEVICE_ARN}"'", "Subject": "devpub/to/lambda", "Target": "'"${ALIAS_ARN}"'"}]}'`
+    --initial-version '{"Subscriptions": [{"Id": "'"${FUNCTION_NAME}-subscription-id"'", "Source": "'"${SOURCE_PUBLISHER_DEVICE_ARN}"'", "Subject": "#", "Target": "'"${ALIAS_ARN}"'"}]}'`
   echo "SUBSCRIPTION_DEFINITION is - ${sub_res}"
   SUBSCRIPTION_DEFINITION_ARN=`echo $sub_res | jq -r '.LatestVersionArn'`
   echo "SUBSCRIPTION_DEFINITION_ARN is : ${SUBSCRIPTION_DEFINITION_ARN}"
@@ -215,6 +279,7 @@ _create_group_version() {
                         --function-definition-version-arn ${LAMBDA_FUNCTION_LATEST_VERSION_ARN} \
                         --subscription-definition-version-arn ${SUBSCRIPTION_DEFINITION_ARN} \
                         --device-definition-version-arn ${DEVICE_LATEST_VERSION_ARN} \
+                        --connector-definition-version-arn ${SW_CONNECTOR_LATEST_VERSION_ARN} \
                         `
   echo ${RES_GGC_GROUP_VERSION}
   GGC_GROUP_VERSION=`echo ${RES_GGC_GROUP_VERSION} | jq -r '.Version'`
@@ -258,11 +323,14 @@ _check_if_zip_exists
 _bundle_the_code
 _check_if_lambda_exists_and_create
 _get_aws_account_number
-#_get_lambda_function_arn # not needed
+_create_iam_role_to_allow_gateway_to_access_sitewise # Create an IAM policy and role to allow the gateway to access AWS IoT SiteWise on your behalf.
+_associate_a_role_to_gg_group
+##########_get_lambda_function_arn # not needed
 _create_a_lambda_function_definition
+#########_create_function_definition_version # not needed
 _get_thing_cert_arn
 _create_device_definition
-#_create_function_definition_version # not needed
+_create_sitewise_connector_definition
 _get_publisher_device_thing_arn
 _create_subscription_definition_and_version
 _check_ggc_group_and_get_core_definition
